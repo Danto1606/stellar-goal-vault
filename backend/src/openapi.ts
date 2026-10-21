@@ -95,8 +95,14 @@ const analyticsPaginationSchema = z
 const apiErrorSchema = z.object({
   success: z.literal(false),
   error: z.object({
-    code: z.string().openapi({ example: 'VALIDATION_ERROR' }),
-    message: z.string().openapi({ example: 'page must be a positive integer.' }),
+    code: z.string().openapi({
+      description: 'Stable machine-readable error code.',
+      example: 'VALIDATION_ERROR',
+    }),
+    message: z.string().openapi({
+      description: 'Client-safe message; unexpected failures use a generic message.',
+      example: 'page must be a positive integer.',
+    }),
     details: z
       .array(
         z.object({
@@ -105,8 +111,14 @@ const apiErrorSchema = z.object({
         }),
       )
       .optional(),
-    requestId: z.string().optional().openapi({ example: 'req-123' }),
+    requestId: z.string().optional().openapi({
+      description: 'Correlation ID also returned in the X-Request-Id response header.',
+      example: 'req-123',
+    }),
   }),
+}).openapi({
+  description:
+    'Standard error envelope. Internal exception messages, stacks, and secret material are not returned.',
 });
 
 // ---------------------------------------------------------------------------
@@ -564,6 +576,17 @@ const payloadTooLargeResponse = {
   content: { 'application/json': { schema: registeredSchemas.ApiError } },
 };
 
+const rateLimitedResponse = {
+  description: 'Rate limit exceeded (RATE_LIMITED)',
+  content: { 'application/json': { schema: registeredSchemas.ApiError } },
+};
+
+const internalServerErrorResponse = {
+  description:
+    'Unexpected server failure (INTERNAL_SERVER_ERROR). Internal details are logged and are not returned.',
+  content: { 'application/json': { schema: registeredSchemas.ApiError } },
+};
+
 registry.registerPath({
   method: 'get',
   path: '/api/health',
@@ -739,7 +762,8 @@ registry.registerPath({
     'defaults to 10 when omitted, both must be integers, and limit is capped at 100. ' +
     'Out-of-range values are rejected with 400 rather than clamped. The response includes ' +
     'total, totalPages, hasPreviousPage, and hasNextPage so callers can navigate without ' +
-    'guessing where the collection ends.',
+    'guessing where the collection ends. Errors use the ApiError envelope with stable codes: ' +
+    'VALIDATION_ERROR, NOT_FOUND, RATE_LIMITED, and INTERNAL_SERVER_ERROR.',
   request: {
     params: z.object({ id: campaignIdParamSchema }),
     query: z.object({
@@ -758,6 +782,7 @@ registry.registerPath({
     },
     400: validationErrorResponse,
     404: notFoundResponse,
+    500: internalServerErrorResponse,
   },
 });
 
@@ -767,7 +792,7 @@ registry.registerPath({
   tags: ['Pledges'],
   summary: 'Create a pledge',
   description:
-    'Creates a pledge for a campaign. Use the Idempotency-Key header to make the request idempotent. Cached responses are returned for 24 hours.',
+    'Creates a pledge for a campaign. Use the Idempotency-Key header to make the request idempotent. Cached responses are returned for 24 hours. Errors use the ApiError envelope with stable codes: VALIDATION_ERROR, NOT_FOUND, INVALID_ASSET, INVALID_CAMPAIGN_STATE, MAX_PER_CONTRIBUTOR_EXCEEDED, CAMPAIGN_FUNDING_CAP_EXCEEDED, RATE_LIMITED, and INTERNAL_SERVER_ERROR. Unexpected failures are logged without exposing internal details.',
   request: {
     params: z.object({ id: campaignIdParamSchema }),
     body: {
@@ -783,7 +808,8 @@ registry.registerPath({
     400: validationErrorResponse,
     404: notFoundResponse,
     413: payloadTooLargeResponse,
-    429: { description: 'Rate limit exceeded' },
+    429: rateLimitedResponse,
+    500: internalServerErrorResponse,
   },
 });
 
